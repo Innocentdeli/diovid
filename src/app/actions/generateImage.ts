@@ -6,7 +6,7 @@ const project = process.env.GOOGLE_CLOUD_PROJECT || 'diovid-project';
 const location = process.env.GOOGLE_CLOUD_LOCATION || 'us-central1';
 const vertexAI = new VertexAI({ project, location });
 
-const IMAGEN_MODEL = 'imagegeneration@006';
+const IMAGEN_MODEL = 'gemini-3-pro-image-preview'; // Nano Banana Pro
 
 export async function generateSceneBackground(prompt: string, referenceImage?: string, characterInfo?: { name: string, vibe: string, traits: string[] }) {
     let attempts = 0;
@@ -22,23 +22,33 @@ export async function generateSceneBackground(prompt: string, referenceImage?: s
 
             const model = vertexAI.getGenerativeModel({ model: IMAGEN_MODEL });
 
-            const request = {
-                prompt: enhancedPrompt,
-                parameters: {
-                    sampleCount: 1,
-                    aspectRatio: "16:9",
-                    addWatermark: false
-                }
-            };
+            const parts: any[] = [
+                { text: enhancedPrompt }
+            ];
 
-            const response = await model.generateContent(request as any);
-            const prediction = (response.response as any).predictions[0];
-
-            if (prediction?.bytesBase64Encoded) {
-                return `data:image/png;base64,${prediction.bytesBase64Encoded}`;
+            // Include reference image if provided (Face matching / Character consistency)
+            if (referenceImage) {
+                const base64 = referenceImage.includes(',') ? referenceImage.split(',')[1] : referenceImage;
+                parts.unshift({
+                    inlineData: {
+                        data: base64.trim(),
+                        mimeType: 'image/jpeg'
+                    }
+                });
             }
 
-            throw new Error("No image data in prediction");
+            const request = {
+                contents: [{ role: 'user', parts }]
+            };
+
+            const response = await model.generateContent(request);
+            const data = response.response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+
+            if (data) {
+                return `data:image/png;base64,${data}`;
+            }
+
+            throw new Error("No image data in response candidates");
 
         } catch (error: any) {
             attempts++;

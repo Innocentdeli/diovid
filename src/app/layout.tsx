@@ -1,8 +1,5 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
 import "./globals.css";
-
-const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
   title: "Diovid | The Multimodal Story Director",
@@ -16,7 +13,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={`${inter.className} dark bg-background selection:bg-primary/30 antialiased`}>
+      <body className="dark bg-background selection:bg-primary/30 antialiased">
         {children}
       </body>
     </html>

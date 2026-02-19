@@ -1,13 +1,16 @@
 "use client";
 
 import { useState, useEffect } from 'react';
-import { Camera, Send, Sparkles, Image as ImageIcon, Mic, Layout, Play, Clock, ChevronRight, Video } from 'lucide-react';
+import { Camera, Send, Sparkles, Image as ImageIcon, Mic, Layout, Play, Clock, ChevronRight, Video, Zap, Film } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { motion, AnimatePresence } from 'framer-motion';
 import TiptapEditor from '@/components/TiptapEditor';
 import { directStory } from '@/app/actions/orchestrate';
 import { generateSceneBackground } from '@/app/actions/generateImage';
+import { generateSceneVideo } from '@/app/actions/generateVideo';
 import { aiCoWrite } from '@/app/actions/aiWriter';
+import { StatusIndicator } from '@/components/ui/StatusIndicator';
+import { Badge } from '@/components/ui/Badge';
 
 interface Character {
     id: string;
@@ -18,29 +21,58 @@ interface Character {
 }
 
 interface Scene {
-    id: number;
-    script: {
-        type: 'acting' | 'narration';
+    scene_id: number;
+    duration_seconds: number;
+    background: {
+        environment: string;
+        lighting: string;
+    };
+    camera: {
+        shot: string;
+        movement: string;
+    };
+    character: {
+        pose: string;
+        emotion: string;
+        eye_focus: string;
+    };
+    animation_contract: {
+        face: {
+            blink_rate: string;
+            mouth_activity: string;
+        };
+        head: {
+            motion_type: string;
+            intensity: number;
+        };
+        gesture: {
+            gesture_name: string | null;
+            start_time_seconds: number;
+            end_time_seconds: number;
+        };
+    };
+    dialogue: {
         text: string;
-        visuals?: string;
-        partUrl?: string;
-        motion_vibe?: string;
-        camera_work?: string;
-        part_duration?: number;
-        transition?: string;
-    }[];
-    visuals: string;
+        voice_style: string;
+        lip_sync: boolean;
+    };
+    transition_out: string;
+    // Generated assets
     backgroundUrl?: string;
-    camera: string;
-    emotion: string;
-    duration: number;
+    videoUrl?: string;
 }
 
 interface Orchestration {
-    persona: {
-        name: string;
-        trait: string;
-        vibe: string;
+    video_meta: {
+        aspect_ratio: string;
+        style: string;
+        total_duration_seconds: number;
+    };
+    character_profile: {
+        source: string;
+        framing: string;
+        default_pose: string;
+        idle_motion: boolean;
     };
     scenes: Scene[];
 }
@@ -80,7 +112,7 @@ export default function DirectorPage() {
     const [orchestration, setOrchestration] = useState<Orchestration | null>(null);
     const [isPlaying, setIsPlaying] = useState(false);
     const [currentSceneIdx, setCurrentSceneIdx] = useState(0);
-    const [currentPartIdx, setCurrentPartIdx] = useState(0);
+
     const [productionLogs, setProductionLogs] = useState<string[]>([]);
     const [currentlyProcessingAiAction, setCurrentlyProcessingAiAction] = useState<'rewrite' | 'continue' | 'improve' | 'scriptify' | 'global_scriptify' | null>(null);
 
@@ -158,51 +190,39 @@ export default function DirectorPage() {
                 traits: c.traits
             })));
 
-            setOrchestration({ ...result, scenes: [] }); // Set initial structure
-            setProductionLogs(["Creative Director initialized. Starting production..."]);
+            setOrchestration({ ...result, scenes: [] });
+            setProductionLogs(["🎬 Video Director initialized. Starting production..."]);
 
-            const scenesWithBackgrounds: Scene[] = [];
+            const scenesWithAssets: Scene[] = [];
             for (const [sIdx, scene] of result.scenes.entries()) {
-                setProductionLogs(prev => [...prev, `🎬 Orchestrating Scene ${sIdx + 1}: ${scene.visuals.substring(0, 40)}...`]);
+                setProductionLogs(prev => [...prev, `🎬 Scene ${sIdx + 1}: ${scene.background?.environment || 'Setting scene'}...`]);
 
-                // 1. Generate Main Scene Background sequentially
-                const bgUrl = await generateSceneBackground(scene.visuals);
-                setProductionLogs(prev => [...prev, `✅ Background generated for Scene ${sIdx + 1}`]);
+                // Generate background from environment description
+                const bgUrl = await generateSceneBackground(scene.background?.environment || 'cinematic studio');
+                setProductionLogs(prev => [...prev, `✅ Background set for Scene ${sIdx + 1}: ${scene.camera?.shot} / ${scene.character?.emotion}`]);
 
-                // 2. Generate per-part visuals sequentially for Live Acting
-                const scriptWithVisuals = [];
-                for (const [pIdx, part] of scene.script.entries()) {
-                    let partUrl = null;
-                    if (part.type === 'acting') {
-                        const nameMatch = part.text.match(/^([^:]+):/);
-                        const name = nameMatch ? nameMatch[1].trim() : "Actor";
-                        setProductionLogs(prev => [...prev, `🎭 Filming Actor performance (${pIdx + 1}): ${name}...`]);
-
-                        const char = characters.find(c =>
-                            name && (c.name.toLowerCase().includes(name.toLowerCase()) || name.toLowerCase().includes(c.name.toLowerCase()))
-                        );
-
-                        // Call generator with the character's face as reference and their vibe/traits
-                        partUrl = await generateSceneBackground(
-                            part.visuals || scene.visuals,
-                            char?.photo || undefined,
-                            char ? { name: char.name, vibe: char.vibe, traits: char.traits } : undefined
-                        );
-                        setProductionLogs(prev => [...prev, `📸 Visual captured for ${name}`]);
+                // Generate acting video from dialogue + character emotion
+                let videoUrl = null;
+                const char = characters.find(c => c.photo);
+                if (char?.photo && scene.dialogue?.text) {
+                    const gestureName = scene.animation_contract?.gesture?.gesture_name || 'arms_relaxed';
+                    const headMotion = scene.animation_contract?.head?.motion_type || 'none';
+                    const visualPrompt = `${scene.character?.emotion} character, ${gestureName}, head ${headMotion}, ${scene.camera?.shot} shot, ${scene.background?.environment}, ${scene.background?.lighting} lighting`;
+                    const partUrl = await generateSceneBackground(visualPrompt, char.photo, { name: char.name, vibe: char.vibe, traits: char.traits });
+                    if (partUrl) {
+                        videoUrl = await generateSceneVideo(visualPrompt, partUrl);
+                        setProductionLogs(prev => [...prev, `🎭 Acting clip captured: ${scene.character?.emotion} / ${gestureName} / head:${headMotion}`]);
                     }
-                    scriptWithVisuals.push({ ...part, partUrl: partUrl || bgUrl });
                 }
 
                 const completedScene = {
                     ...scene,
                     backgroundUrl: bgUrl || `https://images.unsplash.com/photo-1451187580459-43490279c0fa?q=80&w=1920`,
-                    script: scriptWithVisuals
+                    videoUrl: videoUrl || undefined,
                 };
 
-                scenesWithBackgrounds.push(completedScene);
-
-                // Update orchestration incrementally so user sees results
-                setOrchestration(prev => prev ? { ...prev, scenes: [...scenesWithBackgrounds] } : null);
+                scenesWithAssets.push(completedScene);
+                setOrchestration(prev => prev ? { ...prev, scenes: [...scenesWithAssets] } : null);
             }
 
             setProductionLogs(prev => [...prev, "🏁 Production Complete! Launching Cinematic Stream..."]);
@@ -273,151 +293,278 @@ export default function DirectorPage() {
         if (!orchestration) return;
         setIsPlaying(true);
         setCurrentSceneIdx(0);
-        setCurrentPartIdx(0);
+
 
         const synth = window.speechSynthesis;
 
-        const speakPart = (sceneIdx: number, partIdx: number) => {
+        const speakScene = (sceneIdx: number) => {
             const currentScene = orchestration.scenes[sceneIdx];
             if (!currentScene) {
                 setIsPlaying(false);
                 return;
             }
-            const part = currentScene.script[partIdx];
 
-            if (!part) {
-                // Scene finished, move to next scene
-                if (sceneIdx + 1 < orchestration.scenes.length) {
-                    setTimeout(() => {
-                        setCurrentSceneIdx(sceneIdx + 1);
-                        setCurrentPartIdx(0);
-                        speakPart(sceneIdx + 1, 0);
-                    }, 500);
-                } else {
-                    setIsPlaying(false);
-                }
+            setCurrentSceneIdx(sceneIdx);
+
+            const dialogueText = currentScene.dialogue?.text;
+            if (!dialogueText) {
+                // Skip to next scene if no dialogue
+                setTimeout(() => speakScene(sceneIdx + 1), 500);
                 return;
             }
 
-            setCurrentSceneIdx(sceneIdx);
-            setCurrentPartIdx(partIdx);
-
-            let speechText = part.text;
-            if (part.type === 'acting') {
-                speechText = part.text.replace(/^[^:]+:\s*/, '');
-            }
-
-            const utterance = new SpeechSynthesisUtterance(speechText);
+            const utterance = new SpeechSynthesisUtterance(dialogueText);
             const voices = synth.getVoices();
+            const voiceStyle = currentScene.dialogue?.voice_style || 'professional';
 
-            if (part.type === 'narration') {
-                // Narrator: Deeper, slower, British/Professional vibe
-                utterance.voice = voices.find(v => v.name.includes('Google') || v.name.includes('Female')) || voices[0];
-                utterance.pitch = 0.85;
-                utterance.rate = 0.85;
-            } else {
-                // Actor: More natural, slightly higher pitch, faster
-                utterance.voice = voices.find(v => v.name.includes('Natural') || v.name.includes('Male') || v.lang.startsWith('en-US')) || voices[1];
-                utterance.pitch = 1.05;
-                utterance.rate = 1.0;
+            // Map voice_style to speech parameters
+            const voiceMap: Record<string, { pitch: number; rate: number }> = {
+                warm: { pitch: 1.1, rate: 0.95 },
+                professional: { pitch: 1.0, rate: 1.0 },
+                energetic: { pitch: 1.2, rate: 1.1 },
+                calm: { pitch: 0.9, rate: 0.9 },
+            };
+            const params = voiceMap[voiceStyle] || voiceMap.professional;
+            utterance.pitch = params.pitch;
+            utterance.rate = params.rate;
+
+            // Pick a voice
+            const enVoices = voices.filter(v => v.lang.startsWith('en'));
+            if (enVoices.length > 0) {
+                utterance.voice = enVoices[sceneIdx % enVoices.length];
+            } else if (voices.length > 0) {
+                utterance.voice = voices[0];
             }
 
-            // Use Gemini's interleaved duration or fallback to speech length
             utterance.onend = () => {
-                // Buffer to allow visuals to catch up or motion to finish
-                setTimeout(() => speakPart(sceneIdx, partIdx + 1), 500);
+                const nextIdx = sceneIdx + 1;
+                if (nextIdx < orchestration.scenes.length) {
+                    setTimeout(() => speakScene(nextIdx), 600);
+                } else {
+                    setIsPlaying(false);
+                }
             };
             synth.speak(utterance);
         };
 
-        speakPart(0, 0);
+        speakScene(0);
     };
 
     const getCurrentSpeaker = () => {
         if (!orchestration) return null;
-        const part = orchestration.scenes[currentSceneIdx]?.script[currentPartIdx];
-        if (!part || part.type !== 'acting') return null;
-
-        // Extract name from "NAME: text" format
-        const nameMatch = part.text.match(/^([^:]+):/);
-        const name = nameMatch ? nameMatch[1].trim() : null;
-        if (!name) return null;
-
-        return characters.find(c =>
-            c.name.toLowerCase().includes(name.toLowerCase()) ||
-            name.toLowerCase().includes(c.name.toLowerCase())
-        ) || null;
+        const scene = orchestration.scenes[currentSceneIdx];
+        if (!scene) return null;
+        // Return the first character whose name appears in the dialogue, or the first character
+        const dialogueText = scene.dialogue?.text || '';
+        return characters.find(c => dialogueText.toLowerCase().includes(c.name.toLowerCase())) || characters[0] || null;
     };
 
     const activeActor = getCurrentSpeaker();
 
     return (
-        <div className="min-h-screen bg-background text-foreground flex overflow-hidden">
-            {/* Sidebar Navigation */}
-            <aside className="w-20 border-r border-border flex flex-col items-center py-8 gap-8 glass m-4 rounded-3xl h-[calc(100vh-32px)] z-50">
-                <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center font-bold text-xl">D</div>
-                <nav className="flex flex-col gap-6 flex-1 pt-12">
-                    <button onClick={() => setActiveStep(0)} className={cn("p-3 rounded-xl transition-all", activeStep === 0 ? "bg-primary text-white" : "text-foreground/40")} title="Cast"><Camera className="w-6 h-6" /></button>
-                    <button onClick={() => setActiveStep(1)} className={cn("p-3 rounded-xl transition-all", activeStep === 1 ? "bg-primary text-white" : "text-foreground/40")} title="Script"><Layout className="w-6 h-6" /></button>
-                    <button onClick={() => setActiveStep(2)} className={cn("p-3 rounded-xl transition-all", activeStep === 2 ? "bg-primary text-white" : "text-foreground/40")} title="Director Dashboard"><Video className="w-6 h-6" /></button>
+        <div className="min-h-screen bg-gradient-to-br from-background via-background to-surface text-foreground flex flex-col lg:flex-row overflow-hidden">
+            {/* Responsive Navigation - Sidebar on desktop, Bottom nav on mobile */}
+
+            {/* Desktop Sidebar */}
+            <aside className="hidden lg:flex w-20 border-r border-border/30 flex-col items-center py-6 gap-6 glass-intense m-4 rounded-2xl h-[calc(100vh-32px)] z-50 shadow-2xl">
+                <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-primary to-secondary flex items-center justify-center font-display font-bold text-xl shadow-lg">
+                    D
+                </div>
+                <div className="w-8 h-px bg-gradient-to-r from-transparent via-border to-transparent" />
+                <nav className="flex flex-col gap-4 flex-1 pt-4">
+                    <button
+                        onClick={() => setActiveStep(0)}
+                        className={cn(
+                            "p-3 rounded-xl transition-all relative group",
+                            activeStep === 0
+                                ? "bg-primary text-white shadow-glow-primary"
+                                : "text-foreground/40 hover:text-foreground/70 hover:bg-white/5"
+                        )}
+                        title="Cast"
+                    >
+                        <Camera className="w-6 h-6" />
+                        {activeStep === 0 && (
+                            <div className="absolute -left-1 top-1/2 -translate-y-1/2 w-1 h-8 bg-primary rounded-r-full" />
+                        )}
+                    </button>
+                    <button
+                        onClick={() => setActiveStep(1)}
+                        className={cn(
+                            "p-3 rounded-xl transition-all relative group",
+                            activeStep === 1
+                                ? "bg-primary text-white shadow-glow-primary"
+                                : "text-foreground/40 hover:text-foreground/70 hover:bg-white/5"
+                        )}
+                        title="Script"
+                    >
+                        <Layout className="w-6 h-6" />
+                        {activeStep === 1 && (
+                            <div className="absolute -left-1 top-1/2 -translate-y-1/2 w-1 h-8 bg-primary rounded-r-full" />
+                        )}
+                    </button>
+                    <button
+                        onClick={() => setActiveStep(2)}
+                        className={cn(
+                            "p-3 rounded-xl transition-all relative group",
+                            activeStep === 2
+                                ? "bg-primary text-white shadow-glow-primary"
+                                : "text-foreground/40 hover:text-foreground/70 hover:bg-white/5"
+                        )}
+                        title="Director Dashboard"
+                    >
+                        <Video className="w-6 h-6" />
+                        {activeStep === 2 && (
+                            <div className="absolute -left-1 top-1/2 -translate-y-1/2 w-1 h-8 bg-primary rounded-r-full" />
+                        )}
+                    </button>
                 </nav>
+
+                {/* Bottom status */}
+                <div className="w-8 h-px bg-gradient-to-r from-transparent via-border to-transparent" />
+                <div className="w-3 h-3 rounded-full bg-success animate-pulse" title="Connected" />
             </aside>
 
-            {/* Main Workspace */}
-            <main className="flex-1 flex flex-col p-8 gap-8 h-screen overflow-hidden">
-                <header className="flex justify-between items-center">
-                    <div>
-                        <h1 className="text-2xl font-bold tracking-tight">Director Workspace</h1>
-                        <p className="text-foreground/40 text-sm">Create your story with multi-character interleaved direction.</p>
+            {/* Mobile Top Bar */}
+            <div className="lg:hidden sticky top-0 z-50 glass-intense border-b border-border/30 backdrop-blur-xl">
+                <div className="flex items-center justify-between px-4 py-3">
+                    <div className="flex items-center gap-2">
+                        <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary to-secondary flex items-center justify-center font-display font-bold text-sm">
+                            D
+                        </div>
+                        <span className="font-display font-bold text-sm">DIOVID</span>
                     </div>
-                    <div className="flex gap-4">
+                    <StatusIndicator status="active" label="Connected" pulse />
+                </div>
+
+                {/* Mobile Tab Navigation */}
+                <div className="flex border-t border-border/30">
+                    <button
+                        onClick={() => setActiveStep(0)}
+                        className={cn(
+                            "flex-1 flex flex-col items-center gap-1 py-3 transition-all relative touch-manipulation min-h-[60px]",
+                            activeStep === 0
+                                ? "text-primary bg-primary/10"
+                                : "text-foreground/40"
+                        )}
+                    >
+                        <Camera className="w-5 h-5" />
+                        <span className="text-[10px] font-mono uppercase">Cast</span>
+                        {activeStep === 0 && (
+                            <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
+                        )}
+                    </button>
+                    <button
+                        onClick={() => setActiveStep(1)}
+                        className={cn(
+                            "flex-1 flex flex-col items-center gap-1 py-3 transition-all relative touch-manipulation min-h-[60px]",
+                            activeStep === 1
+                                ? "text-primary bg-primary/10"
+                                : "text-foreground/40"
+                        )}
+                    >
+                        <Layout className="w-5 h-5" />
+                        <span className="text-[10px] font-mono uppercase">Script</span>
+                        {activeStep === 1 && (
+                            <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
+                        )}
+                    </button>
+                    <button
+                        onClick={() => setActiveStep(2)}
+                        className={cn(
+                            "flex-1 flex flex-col items-center gap-1 py-3 transition-all relative touch-manipulation min-h-[60px]",
+                            activeStep === 2
+                                ? "text-primary bg-primary/10"
+                                : "text-foreground/40"
+                        )}
+                    >
+                        <Video className="w-5 h-5" />
+                        <span className="text-[10px] font-mono uppercase">Preview</span>
+                        {activeStep === 2 && (
+                            <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
+                        )}
+                    </button>
+                </div>
+            </div>
+
+            {/* Main Workspace - Responsive */}
+            <main className="flex-1 flex flex-col p-4 sm:p-6 lg:p-8 gap-4 sm:gap-6 min-h-screen h-auto">
+                <header className="hidden lg:flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                    <div>
+                        <h1 className="text-2xl lg:text-3xl font-display font-bold tracking-tight mb-2">Director Workspace</h1>
+                        <p className="text-foreground/50 text-sm leading-relaxed">Create your story with multi-character interleaved direction.</p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-3">
                         <button
                             onClick={() => { localStorage.removeItem('diovid-project'); window.location.reload(); }}
-                            className="text-[10px] font-mono uppercase tracking-widest opacity-40 hover:opacity-100 transition-opacity"
+                            className="px-3 py-1.5 text-[10px] font-mono uppercase tracking-widest text-foreground/40 hover:text-foreground/80 hover:bg-white/5 rounded-lg transition-all touch-manipulation min-h-[36px]"
                         >
                             Clear & Reset
                         </button>
-                        <div className="glass px-4 py-2 flex items-center gap-2">
-                            <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-                            <span className="text-xs font-mono uppercase tracking-widest opacity-60">Gemini 3 Global Connected</span>
-                        </div>
+                        <StatusIndicator status="active" label="Gemini Connected" pulse />
                     </div>
                 </header>
 
-                <div className="flex-1 grid grid-cols-12 gap-8 overflow-hidden">
-                    {/* Left Panel: Cast & Editor (Visible based on activeStep) */}
-                    <div className={cn("col-span-12 lg:col-span-5 flex flex-col gap-6 h-full overflow-y-auto pr-2 custom-scrollbar transition-all duration-500", activeStep === 2 ? "hidden lg:flex" : "flex")}>
+                <div className="flex flex-col gap-4 sm:gap-6 lg:gap-8 h-auto">
+                    {/* Top Row: Cast & Editor - Side by Side */}
+                    <div className={cn(
+                        "grid grid-cols-1 md:grid-cols-[1fr_2.5fr] gap-4 sm:gap-6 transition-all duration-500 items-start",
+                        activeStep === 2 ? "hidden lg:grid" : "grid"
+                    )}>
 
-                        {/* Cast Management */}
-                        <section className={cn("glass p-6 transition-all duration-500", activeStep === 0 ? "border-primary/50 ring-1 ring-primary/20" : "opacity-60")}>
-                            <div className="flex items-center justify-between mb-6">
-                                <h2 className="text-lg font-bold flex items-center gap-2">
-                                    <div className="w-6 h-6 rounded-md bg-primary/20 flex items-center justify-center text-primary text-xs">1</div>
-                                    Cast Management
+                        {/* Cast Management - Responsive */}
+                        <section className={cn(
+                            "glass-intense p-4 sm:p-6 transition-all duration-500 border-2 overflow-y-auto custom-scrollbar flex flex-col h-auto max-h-[600px] lg:max-h-[700px]",
+                            activeStep === 0
+                                ? "border-primary/40 shadow-glow-primary block"
+                                : "hidden md:block opacity-60 border-transparent"
+                        )}>
+                            <div className="flex items-center justify-between mb-4 sm:mb-6">
+                                <h2 className="text-base sm:text-lg font-display font-bold flex items-center gap-2 sm:gap-3">
+                                    <Badge variant="primary" size="sm">
+                                        <span className="text-xs sm:text-sm">1</span>
+                                    </Badge>
+                                    <span className="hidden sm:inline">Cast Management</span>
+                                    <span className="sm:hidden">Cast</span>
                                 </h2>
-                                <button onClick={addCharacter} className="text-xs flex items-center gap-1 text-primary hover:underline">
-                                    <Sparkles size={12} /> Add Actor
+                                <button
+                                    onClick={addCharacter}
+                                    className="text-xs flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1.5 text-primary hover:bg-primary/10 rounded-lg transition-all font-semibold touch-manipulation min-h-[36px]"
+                                    aria-label="Add new character to cast"
+                                >
+                                    <Sparkles size={14} className="animate-pulse" />
+                                    <span className="hidden sm:inline">Add Actor</span>
+                                    <span className="sm:hidden">Add</span>
                                 </button>
                             </div>
 
-                            <div className="space-y-4">
+                            <div className="space-y-3 flex-1 overflow-y-auto custom-scrollbar">
                                 {characters.map((char) => (
-                                    <div key={char.id} className="p-4 rounded-2xl bg-white/5 border border-white/10 space-y-4 relative group">
+                                    <div key={char.id} className="p-4 rounded-xl bg-surface/50 border border-border/30 hover:border-primary/30 space-y-4 relative group transition-all">
                                         {characters.length > 1 && (
                                             <button
                                                 onClick={() => removeCharacter(char.id)}
-                                                className="absolute top-2 right-2 text-foreground/20 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
+                                                className="absolute top-3 right-3 w-6 h-6 rounded-lg bg-error/20 text-error hover:bg-error hover:text-white transition-all opacity-0 group-hover:opacity-100 flex items-center justify-center text-xs font-bold"
+                                                aria-label={`Remove ${char.name || 'character'}`}
                                             >
                                                 ✕
                                             </button>
                                         )}
                                         <div className="flex gap-4">
-                                            <div className="w-16 h-16 rounded-xl bg-white/5 border border-dashed border-white/20 flex items-center justify-center overflow-hidden relative cursor-pointer hover:border-primary/40 transition-colors shrink-0">
-                                                <input type="file" className="absolute inset-0 opacity-0 cursor-pointer" onChange={(e) => handlePhotoUpload(char.id, e)} />
+                                            <div className="w-20 h-20 rounded-xl bg-gradient-to-br from-primary/10 to-secondary/10 border-2 border-dashed border-primary/30 flex items-center justify-center overflow-hidden relative cursor-pointer hover:border-primary/60 hover:scale-105 transition-all shrink-0 group/upload">
+                                                <input
+                                                    type="file"
+                                                    className="absolute inset-0 opacity-0 cursor-pointer z-10"
+                                                    onChange={(e) => handlePhotoUpload(char.id, e)}
+                                                    accept="image/*"
+                                                    aria-label={`Upload photo for ${char.name || 'character'}`}
+                                                />
                                                 {char.photo ? (
-                                                    <img src={char.photo} className="w-full h-full object-cover" />
+                                                    <img src={char.photo} className="w-full h-full object-cover" alt={char.name} />
                                                 ) : (
-                                                    <Camera size={20} className="text-foreground/20" />
+                                                    <div className="flex flex-col items-center gap-1">
+                                                        <Camera size={24} className="text-primary/60 group-hover/upload:scale-110 transition-transform" />
+                                                        <span className="text-[8px] text-foreground/40 uppercase font-mono">Upload</span>
+                                                    </div>
                                                 )}
                                             </div>
                                             <div className="flex-1 space-y-2">
@@ -425,13 +572,15 @@ export default function DirectorPage() {
                                                     value={char.name}
                                                     onChange={(e) => updateCharacter(char.id, { name: e.target.value })}
                                                     placeholder="Actor Name (e.g. John Doe)"
-                                                    className="w-full bg-white/5 border-white/10 rounded-lg px-3 py-1 text-sm outline-none focus:border-primary/40 transition-all font-bold"
+                                                    className="w-full bg-background/80 border border-border/50 rounded-lg px-3 py-2 text-sm outline-none focus:border-primary/60 focus:bg-background transition-all font-semibold"
+                                                    aria-label="Character name"
                                                 />
                                                 <input
                                                     value={char.vibe}
                                                     onChange={(e) => updateCharacter(char.id, { vibe: e.target.value })}
                                                     placeholder="Actor Vibe (e.g. Grumpy Detective)"
-                                                    className="w-full bg-white/5 border-white/10 rounded-lg px-3 py-1 text-xs outline-none focus:border-primary/40 transition-all opacity-60"
+                                                    className="w-full bg-background/60 border border-border/30 rounded-lg px-3 py-1.5 text-xs outline-none focus:border-secondary/60 focus:bg-background transition-all text-foreground/70"
+                                                    aria-label="Character vibe or personality"
                                                 />
                                             </div>
                                         </div>
@@ -439,23 +588,37 @@ export default function DirectorPage() {
                                 ))}
                             </div>
                             {activeStep === 0 && (
-                                <button onClick={() => setActiveStep(1)} className="w-full mt-6 py-3 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 transition-all text-sm font-medium">Continue to Scripting</button>
+                                <button
+                                    onClick={() => setActiveStep(1)}
+                                    className="w-full mt-4 sm:mt-6 py-3 rounded-xl bg-primary/10 border border-primary/30 hover:bg-primary/20 hover:border-primary/50 active:scale-95 transition-all text-sm font-semibold text-primary flex items-center justify-center gap-2 touch-manipulation min-h-[48px] shrink-0"
+                                >
+                                    Continue to Scripting
+                                    <ChevronRight size={16} />
+                                </button>
                             )}
                         </section>
 
-                        {/* Script Editor */}
-                        <section className={cn("glass p-6 transition-all duration-500 flex-1 flex flex-col min-h-0", activeStep === 1 ? "border-primary/50 ring-1 ring-primary/20" : "opacity-60")}>
-                            <h2 className="text-lg font-bold flex items-center gap-2 mb-6">
-                                <div className="w-6 h-6 rounded-md bg-primary/20 flex items-center justify-center text-primary text-xs">2</div>
-                                Script & AI Assistant
+                        {/* Script Editor - Responsive */}
+                        <section className={cn(
+                            "glass-intense p-4 sm:p-6 transition-all duration-500 flex flex-col border-2 overflow-hidden min-h-[400px] lg:min-h-[400px] h-auto",
+                            activeStep === 1
+                                ? "border-primary/40 shadow-glow-primary block"
+                                : "hidden md:block opacity-60 border-transparent"
+                        )}>
+                            <h2 className="text-base sm:text-lg font-display font-bold flex items-center gap-2 sm:gap-3 mb-4 sm:mb-6">
+                                <Badge variant="primary" size="sm">
+                                    <span className="text-xs sm:text-sm">2</span>
+                                </Badge>
+                                <span className="hidden sm:inline">Script & AI Assistant</span>
+                                <span className="sm:hidden">Script</span>
                             </h2>
 
-                            <div className="flex-1 min-h-[500px] grid grid-cols-1 lg:grid-cols-2 gap-6">
+                            <div className="flex-1 min-h-0 grid grid-cols-1 xl:grid-cols-2 gap-4 sm:gap-6 items-start">
                                 {/* Story Treatment Area */}
-                                <div className="flex flex-col">
-                                    <div className="flex items-center justify-between mb-2">
-                                        <h3 className="text-xs font-bold text-foreground/40 uppercase tracking-widest">Story Treatment</h3>
-                                        <span className="text-[10px] text-foreground/20 italic">Draft & Continue Story</span>
+                                <div className="flex flex-col min-h-0 overflow-hidden">
+                                    <div className="flex items-center justify-between mb-2 flex-wrap gap-1">
+                                        <h3 className="text-[10px] sm:text-xs font-bold text-foreground/40 uppercase tracking-widest">Story Treatment</h3>
+                                        <span className="text-[9px] sm:text-[10px] text-foreground/20 italic">Draft & Continue</span>
                                     </div>
                                     <TiptapEditor
                                         content={storyHtml}
@@ -464,14 +627,15 @@ export default function DirectorPage() {
                                         isAiProcessing={isAiWriting}
                                         currentlyProcessing={currentlyProcessingAiAction}
                                         role="story"
+                                        className="flex-1 overflow-hidden"
                                     />
                                 </div>
 
                                 {/* Production Script Area */}
-                                <div className="flex flex-col">
-                                    <div className="flex items-center justify-between mb-2">
-                                        <h3 className="text-xs font-bold text-primary uppercase tracking-widest">Production Script</h3>
-                                        <span className="text-[10px] text-primary/40 italic">Final Acting Dialogue</span>
+                                <div className="flex flex-col min-h-0 overflow-hidden">
+                                    <div className="flex items-center justify-between mb-2 flex-wrap gap-1">
+                                        <h3 className="text-[10px] sm:text-xs font-bold text-primary uppercase tracking-widest">Production Script</h3>
+                                        <span className="text-[9px] sm:text-[10px] text-primary/40 italic">Final Dialogue</span>
                                     </div>
                                     <TiptapEditor
                                         content={scriptHtml}
@@ -480,45 +644,74 @@ export default function DirectorPage() {
                                         isAiProcessing={isAiWriting}
                                         currentlyProcessing={currentlyProcessingAiAction}
                                         role="script"
+                                        className="flex-1 overflow-hidden"
                                     />
                                 </div>
                             </div>
 
-                            <button
-                                onClick={startDirecting}
-                                disabled={isProcessing || !scriptHtml}
-                                className="w-full mt-6 button-premium flex items-center justify-center gap-2 h-14 relative overflow-hidden"
-                            >
-                                <AnimatePresence>
-                                    {isProcessing ? (
-                                        <motion.div initial={{ y: 20 }} animate={{ y: 0 }} exit={{ y: -20 }} className="flex items-center gap-2">
-                                            <Sparkles className="animate-spin" size={20} /> Orchestrating...
-                                        </motion.div>
-                                    ) : (
-                                        <motion.div initial={{ y: 20 }} animate={{ y: 0 }} exit={{ y: -20 }} className="flex items-center gap-2">
-                                            Produce Multimodal Stream <Send size={16} />
-                                        </motion.div>
-                                    )}
-                                </AnimatePresence>
-                            </button>
+                            <div className="sticky bottom-0 pt-6 pb-2 bg-gradient-to-t from-background/90 via-background/50 to-transparent backdrop-blur-sm z-10 -mx-4 sm:-mx-6 px-4 sm:px-6 mt-auto">
+                                <button
+                                    onClick={startDirecting}
+                                    disabled={isProcessing || !scriptHtml}
+                                    className="w-full button-premium flex items-center justify-center gap-2 sm:gap-3 h-12 sm:h-14 relative overflow-hidden text-base sm:text-lg disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation shadow-glow-primary"
+                                >
+                                    <AnimatePresence mode="wait">
+                                        {isProcessing ? (
+                                            <motion.div
+                                                key="processing"
+                                                initial={{ opacity: 0, y: 20 }}
+                                                animate={{ opacity: 1, y: 0 }}
+                                                exit={{ opacity: 0, y: -20 }}
+                                                className="flex items-center gap-2 sm:gap-3"
+                                            >
+                                                <Sparkles className="animate-spin" size={18} />
+                                                <span className="font-semibold text-sm sm:text-base">Orchestrating...</span>
+                                            </motion.div>
+                                        ) : (
+                                            <motion.div
+                                                key="ready"
+                                                initial={{ opacity: 0, y: 20 }}
+                                                animate={{ opacity: 1, y: 0 }}
+                                                exit={{ opacity: 0, y: -20 }}
+                                                className="flex items-center gap-2 sm:gap-3"
+                                            >
+                                                <Zap size={18} className="hidden sm:block" />
+                                                <span className="font-semibold text-sm sm:text-base">Produce Stream</span>
+                                                <Send size={16} />
+                                            </motion.div>
+                                        )}
+                                    </AnimatePresence>
+                                </button>
+                            </div>
                         </section>
                     </div>
 
-                    {/* Right Panel: Preview Area */}
-                    <div className={cn("col-span-12 glass rounded-3xl p-8 relative flex flex-col h-full bg-black/40 border-white/5 overflow-hidden transition-all duration-500", activeStep === 2 ? "lg:col-span-12" : "lg:col-span-7")}>
-
+                    {/* Bottom Row: Preview Area - Full Width */}
+                    <div className={cn(
+                        "glass-intense rounded-2xl p-4 sm:p-6 lg:p-8 relative flex flex-col border-2 border-border/20 overflow-hidden transition-all duration-500 bg-gradient-to-br from-surface/50 to-background/50 shrink-0",
+                        activeStep === 2 ? "min-h-[600px] lg:min-h-[700px] h-auto" : "hidden lg:flex min-h-[400px] xl:min-h-[500px] h-auto"
+                    )}>
                         <AnimatePresence mode="wait">
                             {!orchestration && !isProcessing && (
                                 <motion.div
                                     key="placeholder"
-                                    initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                                    className="absolute inset-0 flex flex-col items-center justify-center text-center p-12"
+                                    initial={{ opacity: 0 }}
+                                    animate={{ opacity: 1 }}
+                                    exit={{ opacity: 0 }}
+                                    className="flex flex-col items-center justify-center text-center p-6 sm:p-8 lg:p-12 min-h-[400px]"
                                 >
-                                    <div className="w-24 h-24 rounded-full bg-primary/5 flex items-center justify-center mb-6">
-                                        <Play className="w-10 h-10 text-primary border-primary/20" />
+                                    <div className="w-20 h-20 sm:w-24 sm:h-24 lg:w-28 lg:h-28 rounded-xl sm:rounded-2xl bg-gradient-to-br from-primary/20 to-secondary/20 flex items-center justify-center mb-6 sm:mb-8 border-2 border-primary/30 shadow-glow-primary animate-float">
+                                        <Film className="w-10 h-10 sm:w-12 sm:h-12 lg:w-14 lg:h-14 text-primary" />
                                     </div>
-                                    <h2 className="text-2xl font-bold mb-3 tracking-tight">Ready for Production</h2>
-                                    <p className="text-foreground/30 max-w-sm text-sm">Upload your cast and draft a script. Gemini 3 will then generate a cinematic multimodal story with audio and visuals.</p>
+                                    <h2 className="text-xl sm:text-2xl lg:text-3xl font-display font-bold mb-3 sm:mb-4 tracking-tight gradient-text">Ready for Production</h2>
+                                    <p className="text-foreground/50 text-sm sm:text-base leading-relaxed px-4">
+                                        Upload your cast and draft a script. Gemini will generate a cinematic multimodal story with audio and visuals.
+                                    </p>
+                                    <div className="mt-6 sm:mt-8 flex flex-wrap justify-center gap-2 sm:gap-3">
+                                        <Badge variant="primary" size="sm">AI-Powered</Badge>
+                                        <Badge variant="secondary" size="sm">Multimodal</Badge>
+                                        <Badge variant="accent" size="sm">Real-time</Badge>
+                                    </div>
                                 </motion.div>
                             )}
 
@@ -526,53 +719,60 @@ export default function DirectorPage() {
                                 <motion.div
                                     key="loading"
                                     initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                                    className="absolute inset-0 flex bg-black/80 backdrop-blur-xl z-40 overflow-hidden"
+                                    className="absolute inset-0 flex bg-black/90 backdrop-blur-xl z-40 overflow-hidden"
                                 >
-                                    <div className="flex-1 grid grid-cols-2 h-full">
-                                        {/* Left: Production Console */}
-                                        <div className="border-r border-white/10 p-8 flex flex-col gap-6 overflow-hidden bg-black/20">
+                                    <div className="flex-1 flex flex-col lg:grid lg:grid-cols-2 h-full">
+                                        {/* Left: Production Console - Responsive */}
+                                        <div className="border-b lg:border-b-0 lg:border-r border-white/10 p-4 sm:p-6 lg:p-8 flex flex-col gap-4 sm:gap-6 overflow-hidden bg-gradient-to-br from-background to-surface/50">
                                             <div className="flex items-center justify-between">
-                                                <div className="flex items-center gap-3">
-                                                    <div className="w-8 h-8 rounded-lg bg-primary/20 flex items-center justify-center border border-primary/30">
-                                                        <Sparkles size={16} className="text-primary animate-pulse" />
+                                                <div className="flex items-center gap-2 sm:gap-3">
+                                                    <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl bg-gradient-to-br from-primary/30 to-secondary/30 flex items-center justify-center border-2 border-primary/40 shadow-glow-primary">
+                                                        <Sparkles size={16} className="sm:w-[18px] sm:h-[18px] text-primary animate-pulse" />
                                                     </div>
                                                     <div>
-                                                        <h3 className="text-sm font-bold tracking-tight">Production Studio</h3>
-                                                        <p className="text-[10px] text-white/40 font-mono">GEN-3 ENGINE | GLOBAL</p>
+                                                        <h3 className="text-xs sm:text-sm font-display font-bold tracking-tight">Production Studio</h3>
+                                                        <p className="text-[9px] sm:text-[10px] text-foreground/40 font-mono uppercase tracking-wider">Gemini Engine</p>
                                                     </div>
                                                 </div>
-                                                <div className="glass px-2 py-1 flex items-center gap-2">
-                                                    <span className="w-1.5 h-1.5 rounded-full bg-primary animate-ping" />
-                                                    <span className="text-[9px] font-mono opacity-60 uppercase">Live Feed</span>
-                                                </div>
+                                                <Badge variant="primary" size="sm">
+                                                    <span className="w-1.5 h-1.5 rounded-full bg-primary animate-ping mr-1" />
+                                                    <span className="hidden sm:inline">Live</span>
+                                                    <span className="sm:hidden">●</span>
+                                                </Badge>
                                             </div>
 
-                                            <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-3 font-mono text-[11px]">
+                                            <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-1.5 sm:gap-2 font-mono text-[10px] sm:text-[11px] max-h-[200px] lg:max-h-full">
                                                 {productionLogs.map((log, i) => (
                                                     <motion.div
                                                         key={i}
-                                                        initial={{ opacity: 0, x: -10 }}
+                                                        initial={{ opacity: 0, x: -20 }}
                                                         animate={{ opacity: 1, x: 0 }}
+                                                        transition={{ delay: i * 0.05 }}
                                                         className={cn(
-                                                            "p-3 rounded-lg border flex gap-3 transition-colors",
+                                                            "p-2 sm:p-3 rounded-lg sm:rounded-xl border flex gap-2 sm:gap-3 transition-all",
                                                             i === productionLogs.length - 1
-                                                                ? "bg-primary/5 border-primary/20 text-primary shadow-[0_0_20px_rgba(var(--primary-rgb),0.1)]"
-                                                                : "bg-white/5 border-white/5 text-white/40"
+                                                                ? "bg-gradient-to-r from-primary/10 to-secondary/10 border-primary/30 text-primary shadow-glow-primary"
+                                                                : "bg-surface/30 border-border/20 text-foreground/50"
                                                         )}
                                                     >
-                                                        <span className="opacity-30">{String(i + 1).padStart(2, '0')}</span>
-                                                        <span className="flex-1">{log}</span>
+                                                        <span className={cn(
+                                                            "font-bold tabular-nums text-[9px] sm:text-[10px]",
+                                                            i === productionLogs.length - 1 ? "text-primary" : "opacity-30"
+                                                        )}>
+                                                            {String(i + 1).padStart(2, '0')}
+                                                        </span>
+                                                        <span className="flex-1 leading-relaxed text-[10px] sm:text-[11px]">{log}</span>
                                                     </motion.div>
                                                 ))}
                                                 <div id="logs-end" />
                                             </div>
 
-                                            <div className="pt-6 border-t border-white/10 flex items-center justify-between opacity-50">
-                                                <div className="flex gap-4">
-                                                    <div className="flex items-center gap-1.5 text-[9px] uppercase tracking-widest"><Camera size={10} /> IMAGEN 3</div>
-                                                    <div className="flex items-center gap-1.5 text-[9px] uppercase tracking-widest"><Video size={10} /> VERTEX AI</div>
+                                            <div className="pt-4 sm:pt-6 border-t border-white/10 flex flex-col sm:flex-row items-center justify-between gap-3 sm:gap-0 opacity-50">
+                                                <div className="flex gap-3 sm:gap-4">
+                                                    <div className="flex items-center gap-1 sm:gap-1.5 text-[8px] sm:text-[9px] uppercase tracking-widest"><Camera size={9} className="sm:w-[10px] sm:h-[10px]" /> IMAGEN</div>
+                                                    <div className="flex items-center gap-1 sm:gap-1.5 text-[8px] sm:text-[9px] uppercase tracking-widest"><Video size={9} className="sm:w-[10px] sm:h-[10px]" /> VERTEX</div>
                                                 </div>
-                                                <div className="w-24 h-1 bg-white/10 rounded-full overflow-hidden">
+                                                <div className="w-full sm:w-24 h-1 bg-white/10 rounded-full overflow-hidden">
                                                     <motion.div
                                                         className="h-full bg-primary"
                                                         initial={{ width: "0%" }}
@@ -582,42 +782,62 @@ export default function DirectorPage() {
                                             </div>
                                         </div>
 
-                                        {/* Right: Visual Feed */}
-                                        <div className="relative flex flex-col items-center justify-center p-12 bg-gradient-to-br from-black/40 to-black/80">
+                                        {/* Right: Visual Feed - Responsive */}
+                                        <div className="relative flex flex-col items-center justify-center p-6 sm:p-8 lg:p-12 bg-gradient-to-br from-black/40 to-black/80 flex-1">
                                             <AnimatePresence mode="wait">
                                                 {orchestration?.scenes && orchestration.scenes.length > 0 ? (
                                                     <motion.div
                                                         key={orchestration.scenes.length}
                                                         initial={{ opacity: 0, scale: 0.95, rotate: -2 }}
                                                         animate={{ opacity: 1, scale: 1, rotate: 0 }}
-                                                        className="relative w-full aspect-video rounded-xl overflow-hidden shadow-2xl border border-white/10 group"
+                                                        className="relative w-full aspect-video rounded-lg sm:rounded-xl overflow-hidden shadow-2xl border border-white/10 group"
                                                     >
-                                                        <img
-                                                            src={orchestration.scenes[orchestration.scenes.length - 1].backgroundUrl}
-                                                            className="w-full h-full object-cover"
-                                                            alt="Latest Scene"
-                                                        />
-                                                        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent flex flex-col justify-end p-6">
-                                                            <div className="text-[10px] text-primary font-bold uppercase tracking-widest mb-1 flex items-center gap-2">
-                                                                <Play size={10} fill="currentColor" /> Live Visual Feed
+                                                        {(() => {
+                                                            const latestScene = orchestration.scenes[orchestration.scenes.length - 1];
+
+                                                            if (latestScene.videoUrl) {
+                                                                return (
+                                                                    <video
+                                                                        src={latestScene.videoUrl}
+                                                                        className="w-full h-full object-cover"
+                                                                        autoPlay
+                                                                        loop
+                                                                        muted
+                                                                        playsInline
+                                                                    />
+                                                                );
+                                                            } else if (latestScene.backgroundUrl) {
+                                                                return (
+                                                                    <img
+                                                                        src={latestScene.backgroundUrl}
+                                                                        className="w-full h-full object-cover"
+                                                                        alt="Latest Generation"
+                                                                    />
+                                                                );
+                                                            }
+                                                            return null;
+                                                        })()}
+                                                        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent flex flex-col justify-end p-3 sm:p-4 lg:p-6">
+                                                            <div className="text-[9px] sm:text-[10px] text-primary font-bold uppercase tracking-widest mb-1 flex items-center gap-1 sm:gap-2">
+                                                                <Play size={8} className="sm:w-[10px] sm:h-[10px]" fill="currentColor" /> Live Feed
                                                             </div>
-                                                            <div className="text-sm font-bold truncate max-w-full">
-                                                                Scene {orchestration.scenes.length}: {orchestration.scenes[orchestration.scenes.length - 1].visuals}
+                                                            <div className="text-xs sm:text-sm font-bold truncate max-w-full">
+                                                                Scene {orchestration.scenes.length}: {orchestration.scenes[orchestration.scenes.length - 1].background?.environment}
                                                             </div>
                                                         </div>
-                                                        <div className="absolute top-4 right-4 flex gap-2">
-                                                            <div className="glass px-2 py-1 text-[8px] font-mono tracking-tighter bg-black/60 border-primary/40">GEN_SYNC: OK</div>
-                                                            <div className="glass px-2 py-1 text-[8px] font-mono tracking-tighter bg-black/60">FPS: 00</div>
+                                                        <div className="absolute top-2 sm:top-4 right-2 sm:right-4 flex gap-1 sm:gap-2">
+                                                            <div className="glass px-1.5 sm:px-2 py-0.5 sm:py-1 text-[7px] sm:text-[8px] font-mono tracking-tighter bg-black/60 border-primary/40">SYNC</div>
+                                                            <div className="glass px-1.5 sm:px-2 py-0.5 sm:py-1 text-[7px] sm:text-[8px] font-mono tracking-tighter bg-black/60">OK</div>
                                                         </div>
                                                     </motion.div>
                                                 ) : (
-                                                    <div className="text-center space-y-4">
-                                                        <div className="w-16 h-16 rounded-full border border-white/10 flex items-center justify-center mx-auto mb-4 bg-white/5 relative">
+                                                    <div className="text-center space-y-3 sm:space-y-4">
+                                                        <div className="w-12 h-12 sm:w-16 sm:h-16 rounded-full border border-white/10 flex items-center justify-center mx-auto mb-3 sm:mb-4 bg-white/5 relative">
                                                             <div className="absolute inset-0 rounded-full border-2 border-primary/20 border-t-primary animate-spin" />
-                                                            <Camera className="text-white/20" size={24} />
+                                                            <Camera className="text-white/20" size={20} />
                                                         </div>
-                                                        <h4 className="text-sm font-bold opacity-40 uppercase tracking-widest">Awaiting First Frame</h4>
-                                                        <p className="text-[10px] opacity-20 max-w-[200px] mx-auto leading-relaxed">Vertex AI is simulating the cinematic environment for your first scene...</p>
+                                                        <h4 className="text-xs sm:text-sm font-bold opacity-40 uppercase tracking-widest">Awaiting First Frame</h4>
+                                                        <p className="text-[9px] sm:text-[10px] opacity-20 max-w-[240px] sm:max-w-[280px] mx-auto leading-relaxed px-4">AI is simulating your first scene...</p>
                                                     </div>
                                                 )}
                                             </AnimatePresence>
@@ -635,38 +855,50 @@ export default function DirectorPage() {
                                     {/* Cinematic Viewport */}
                                     <div className="relative aspect-video w-full rounded-2xl overflow-hidden bg-black shadow-2xl border border-white/5 mb-8 group">
                                         <AnimatePresence mode="wait">
-                                            <motion.div
-                                                key={`${currentSceneIdx}-${currentPartIdx}`}
-                                                initial={{
-                                                    opacity: 0,
-                                                    scale: orchestration.scenes[currentSceneIdx].script[currentPartIdx]?.motion_vibe?.includes('zoom_in') ? 1.3 : 1.1,
-                                                    x: orchestration.scenes[currentSceneIdx].script[currentPartIdx]?.motion_vibe?.includes('pan_right') ? -100 :
-                                                        orchestration.scenes[currentSceneIdx].script[currentPartIdx]?.motion_vibe?.includes('pan_left') ? 100 : 0,
-                                                    y: orchestration.scenes[currentSceneIdx].script[currentPartIdx]?.motion_vibe?.includes('tilt_up') ? 50 : 0
-                                                }}
-                                                animate={{
-                                                    opacity: 1,
-                                                    scale: orchestration.scenes[currentSceneIdx].script[currentPartIdx]?.motion_vibe?.includes('zoom_in') ? 1.0 : 1.05,
-                                                    x: orchestration.scenes[currentSceneIdx].script[currentPartIdx]?.motion_vibe?.includes('pan_right') ? 50 :
-                                                        orchestration.scenes[currentSceneIdx].script[currentPartIdx]?.motion_vibe?.includes('pan_left') ? -50 : 0,
-                                                    y: orchestration.scenes[currentSceneIdx].script[currentPartIdx]?.motion_vibe?.includes('tilt_up') ? -20 : 0,
-                                                    rotate: orchestration.scenes[currentSceneIdx].script[currentPartIdx]?.motion_vibe?.includes('shake') ? [0, -2, 2, -2, 0] : 0
-                                                }}
-                                                exit={{ opacity: 0, scale: 0.9 }}
-                                                transition={{
-                                                    duration: orchestration.scenes[currentSceneIdx].script[currentPartIdx]?.motion_vibe?.includes('slow') ? 6 : 2.5,
-                                                    ease: "anticipate",
-                                                    rotate: { repeat: Infinity, duration: 0.15 }
-                                                }}
-                                                className="absolute inset-0"
-                                            >
-                                                <img
-                                                    src={orchestration.scenes[currentSceneIdx].script[currentPartIdx]?.partUrl || orchestration.scenes[currentSceneIdx].backgroundUrl}
-                                                    className="w-full h-full object-cover"
-                                                    alt="Background"
-                                                />
-                                                <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-black/30" />
-                                            </motion.div>
+                                            {(() => {
+                                                const scene = orchestration.scenes[currentSceneIdx];
+                                                const prevScene = orchestration.scenes[currentSceneIdx - 1];
+                                                const transitionType = prevScene?.transition_out || 'cut';
+                                                const exitAnim =
+                                                    transitionType === 'crossfade' ? { opacity: 0, scale: 1.02 } :
+                                                        transitionType === 'fade' ? { opacity: 0 } :
+                                                    /* cut */                        { opacity: 0 };
+
+                                                return (
+                                                    <motion.div
+                                                        key={`scene-${currentSceneIdx}`}
+                                                        initial={{ opacity: 0, scale: 1.05 }}
+                                                        animate={{
+                                                            opacity: 1,
+                                                            scale: scene.camera?.movement === 'slow_zoom_in' ? [1.05, 1.0] :
+                                                                scene.camera?.movement === 'slow_zoom_out' ? [1.0, 1.05] : 1.0,
+                                                            x: scene.camera?.movement === 'slight_pan_right' ? [0, 30] :
+                                                                scene.camera?.movement === 'slight_pan_left' ? [0, -30] : 0,
+                                                        }}
+                                                        exit={exitAnim}
+                                                        transition={{ duration: 2.5, ease: 'anticipate' }}
+                                                        className="absolute inset-0"
+                                                    >
+                                                        {scene.videoUrl ? (
+                                                            <video
+                                                                src={scene.videoUrl}
+                                                                className="w-full h-full object-cover"
+                                                                autoPlay
+                                                                loop
+                                                                muted
+                                                                playsInline
+                                                            />
+                                                        ) : (
+                                                            <img
+                                                                src={scene.backgroundUrl}
+                                                                className="w-full h-full object-cover"
+                                                                alt="Background"
+                                                            />
+                                                        )}
+                                                        <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-black/30" />
+                                                    </motion.div>
+                                                );
+                                            })()}
                                         </AnimatePresence>
 
                                         {/* Ambient Life Overlays */}
@@ -682,48 +914,44 @@ export default function DirectorPage() {
                                             />
                                         </div>
 
-                                        {/* Cinematic Meta (Updated for Motion) */}
+                                        {/* Cinematic Meta HUD */}
                                         <div className="absolute top-6 left-6 flex flex-col gap-2 z-20">
                                             <div className="glass px-3 py-1 flex items-center gap-2 text-[10px] uppercase font-bold tracking-widest bg-black/60 border-primary/40 text-primary">
-                                                <Video size={10} /> SCENE {currentSceneIdx + 1} • {orchestration.scenes[currentSceneIdx].script[currentPartIdx]?.motion_vibe?.replace('_', ' ') || 'ACTIVE'}
+                                                <Video size={10} /> SCENE {currentSceneIdx + 1} • {orchestration.scenes[currentSceneIdx].camera?.movement?.replace(/_/g, ' ') || 'ACTIVE'}
                                             </div>
                                             <div className="glass px-3 py-1 flex items-center gap-2 text-[10px] uppercase font-bold tracking-widest bg-black/60">
-                                                <Camera size={10} className="text-white/60" /> {orchestration.scenes[currentSceneIdx].script[currentPartIdx]?.camera_work || orchestration.scenes[currentSceneIdx].camera}
+                                                <Camera size={10} className="text-white/60" /> {orchestration.scenes[currentSceneIdx].camera?.shot?.replace(/_/g, ' ') || 'medium'}
+                                            </div>
+                                            <div className="glass px-3 py-1 flex items-center gap-2 text-[10px] uppercase font-bold tracking-widest bg-black/60">
+                                                <Sparkles size={10} className="text-secondary" /> {orchestration.scenes[currentSceneIdx].character?.emotion || 'neutral'}
+                                            </div>
+                                            <div className="glass px-3 py-1 flex items-center gap-2 text-[10px] uppercase font-bold tracking-widest bg-black/60">
+                                                <Zap size={10} className="text-yellow-400" /> {orchestration.scenes[currentSceneIdx].animation_contract?.gesture?.gesture_name?.replace(/_/g, ' ') || 'arms relaxed'}
+                                            </div>
+                                            <div className="glass px-3 py-1 flex items-center gap-2 text-[10px] uppercase font-bold tracking-widest bg-black/60">
+                                                <Mic size={10} className="text-green-400" /> BLINK: {orchestration.scenes[currentSceneIdx].animation_contract?.face?.blink_rate || 'medium'}
                                             </div>
                                         </div>
 
-                                        {/* Subtitles / Script Overlay */}
+                                        {/* Subtitles / Dialogue Overlay */}
                                         <div className="absolute bottom-12 inset-x-0 flex justify-center px-12 text-center pointer-events-none">
                                             <AnimatePresence mode="wait">
                                                 <motion.div
-                                                    key={currentSceneIdx + '-' + currentPartIdx}
+                                                    key={currentSceneIdx}
                                                     initial={{ opacity: 0, y: 10 }}
                                                     animate={{ opacity: 1, y: 0 }}
                                                     exit={{ opacity: 0, y: -10 }}
-                                                    className={cn(
-                                                        "max-w-3xl px-8 py-4 rounded-2xl backdrop-blur-xl border",
-                                                        orchestration.scenes[currentSceneIdx].script[currentPartIdx]?.type === 'narration'
-                                                            ? "bg-black/40 border-white/10 italic text-foreground/80"
-                                                            : "bg-primary/20 border-primary/30 font-medium text-white shadow-2xl ring-1 ring-white/10"
-                                                    )}
+                                                    className="max-w-5xl px-8 py-4 rounded-2xl backdrop-blur-xl border bg-primary/20 border-primary/30 font-medium text-white shadow-2xl ring-1 ring-white/10"
                                                 >
                                                     <span className="text-[10px] uppercase tracking-[0.2em] font-bold opacity-40 block mb-1">
-                                                        {orchestration.scenes[currentSceneIdx].script[currentPartIdx]?.type || 'DIRECTOR'}
+                                                        {orchestration.scenes[currentSceneIdx].character?.emotion?.toUpperCase() || 'DIALOGUE'}
                                                     </span>
-                                                    <p className="text-lg leading-relaxed">{orchestration.scenes[currentSceneIdx].script[currentPartIdx]?.text || 'Preparing sequence...'}</p>
+                                                    <p className="text-base sm:text-lg lg:text-xl leading-relaxed">{orchestration.scenes[currentSceneIdx].dialogue?.text || 'Preparing sequence...'}</p>
                                                 </motion.div>
                                             </AnimatePresence>
                                         </div>
 
-                                        {/* Cinematic Meta */}
-                                        <div className="absolute top-6 left-6 flex flex-col gap-2">
-                                            <div className="glass px-3 py-1 flex items-center gap-2 text-[10px] uppercase font-bold tracking-widest bg-black/60">
-                                                <Video size={10} className="text-primary" /> SCENE {currentSceneIdx + 1} / {orchestration.scenes.length}
-                                            </div>
-                                            <div className="glass px-3 py-1 flex items-center gap-2 text-[10px] uppercase font-bold tracking-widest bg-black/60">
-                                                <Camera size={10} className="text-white/60" /> {orchestration.scenes[currentSceneIdx].camera}
-                                            </div>
-                                        </div>
+                                        {/* Duplicate meta block removed - already rendered above */}
 
                                         {/* Progress Bar */}
                                         <div className="absolute bottom-0 left-0 right-0 h-1.5 bg-white/10">
@@ -732,7 +960,7 @@ export default function DirectorPage() {
                                                 initial={{ width: "0%" }}
                                                 animate={{
                                                     width: isPlaying
-                                                        ? `${((currentSceneIdx * 100) / orchestration.scenes.length) + ((currentPartIdx + 1) * (100 / orchestration.scenes.length / orchestration.scenes[currentSceneIdx].script.length))}%`
+                                                        ? `${((currentSceneIdx + 1) * 100) / orchestration.scenes.length}%`
                                                         : "100%"
                                                 }}
                                             />
@@ -756,8 +984,15 @@ export default function DirectorPage() {
                                         </div>
 
                                         <div className="text-right">
-                                            <h3 className="text-sm font-bold uppercase tracking-widest gradient-text">Director's Analysis</h3>
-                                            <p className="text-[10px] text-foreground/30 font-mono">EMOTION: {orchestration.scenes[currentSceneIdx].emotion}</p>
+                                            <h3 className="text-sm font-bold uppercase tracking-widest gradient-text">Animation Contract</h3>
+                                            <p className="text-[10px] text-foreground/30 font-mono">EMOTION: {orchestration.scenes[currentSceneIdx].character?.emotion}</p>
+                                            <p className="text-[10px] text-foreground/30 font-mono">EYE: {orchestration.scenes[currentSceneIdx].character?.eye_focus}</p>
+                                            <p className="text-[10px] text-foreground/30 font-mono">BLINK: {orchestration.scenes[currentSceneIdx].animation_contract?.face?.blink_rate}</p>
+                                            <p className="text-[10px] text-foreground/30 font-mono">MOUTH: {orchestration.scenes[currentSceneIdx].animation_contract?.face?.mouth_activity}</p>
+                                            <p className="text-[10px] text-foreground/30 font-mono">HEAD: {orchestration.scenes[currentSceneIdx].animation_contract?.head?.motion_type} ({orchestration.scenes[currentSceneIdx].animation_contract?.head?.intensity?.toFixed(1)})</p>
+                                            <p className="text-[10px] text-foreground/30 font-mono">GESTURE: {orchestration.scenes[currentSceneIdx].animation_contract?.gesture?.gesture_name?.replace(/_/g, ' ')}</p>
+                                            <p className="text-[10px] text-foreground/30 font-mono">TIMING: {orchestration.scenes[currentSceneIdx].animation_contract?.gesture?.start_time_seconds}s – {orchestration.scenes[currentSceneIdx].animation_contract?.gesture?.end_time_seconds}s</p>
+                                            <p className="text-[10px] text-foreground/30 font-mono">VOICE: {orchestration.scenes[currentSceneIdx].dialogue?.voice_style}</p>
                                         </div>
                                     </div>
                                 </motion.div>

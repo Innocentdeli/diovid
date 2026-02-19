@@ -16,12 +16,21 @@ const MODEL_NAME = `projects/${project}/locations/${location}/publishers/google/
 const responseSchema = {
     type: SchemaType.OBJECT,
     properties: {
-        persona: {
+        video_meta: {
             type: SchemaType.OBJECT,
             properties: {
-                name: { type: SchemaType.STRING },
-                trait: { type: SchemaType.STRING },
-                vibe: { type: SchemaType.STRING },
+                aspect_ratio: { type: SchemaType.STRING, description: "16:9 | 9:16 | 1:1" },
+                style: { type: SchemaType.STRING, description: "professional | cinematic | social_media" },
+                total_duration_seconds: { type: SchemaType.NUMBER },
+            }
+        },
+        character_profile: {
+            type: SchemaType.OBJECT,
+            properties: {
+                source: { type: SchemaType.STRING },
+                framing: { type: SchemaType.STRING, description: "chest_up" },
+                default_pose: { type: SchemaType.STRING, description: "standing | seated" },
+                idle_motion: { type: SchemaType.BOOLEAN },
             }
         },
         scenes: {
@@ -29,26 +38,66 @@ const responseSchema = {
             items: {
                 type: SchemaType.OBJECT,
                 properties: {
-                    id: { type: SchemaType.NUMBER },
-                    script: {
-                        type: SchemaType.ARRAY,
-                        items: {
-                            type: SchemaType.OBJECT,
-                            properties: {
-                                type: { type: SchemaType.STRING, description: "acting or narration" },
-                                text: { type: SchemaType.STRING },
-                                visuals: { type: SchemaType.STRING, description: "Action visual: character pose, expression, and context." },
-                                motion_vibe: { type: SchemaType.STRING, description: "Cinematic motion: slow_zoom, dramatic_push, shake, tilt, or pan." },
-                                camera_work: { type: SchemaType.STRING, description: "Specific camera instruction (e.g. 'Tight on eyes', 'Low angle push')." },
-                                part_duration: { type: SchemaType.NUMBER, description: "Duration in seconds for this specific action/dialogue." },
-                                transition: { type: SchemaType.STRING, description: "Transition to next part (e.g. 'dissolve', 'jump_cut', 'blur_fade')." },
+                    scene_id: { type: SchemaType.NUMBER },
+                    duration_seconds: { type: SchemaType.NUMBER },
+                    background: {
+                        type: SchemaType.OBJECT,
+                        properties: {
+                            environment: { type: SchemaType.STRING, description: "descriptive but realistic setting" },
+                            lighting: { type: SchemaType.STRING, description: "soft | bright | dramatic" },
+                        }
+                    },
+                    camera: {
+                        type: SchemaType.OBJECT,
+                        properties: {
+                            shot: { type: SchemaType.STRING, description: "close_up | medium | medium_wide" },
+                            movement: { type: SchemaType.STRING, description: "static | slow_zoom_in | slow_zoom_out | slight_pan_left | slight_pan_right" },
+                        }
+                    },
+                    character: {
+                        type: SchemaType.OBJECT,
+                        properties: {
+                            pose: { type: SchemaType.STRING, description: "standing | seated" },
+                            emotion: { type: SchemaType.STRING, description: "neutral | confident | friendly | serious | excited | thoughtful | concerned" },
+                            eye_focus: { type: SchemaType.STRING, description: "camera | slight_off_camera" },
+                        }
+                    },
+                    animation_contract: {
+                        type: SchemaType.OBJECT,
+                        properties: {
+                            face: {
+                                type: SchemaType.OBJECT,
+                                properties: {
+                                    blink_rate: { type: SchemaType.STRING, description: "low | medium | high" },
+                                    mouth_activity: { type: SchemaType.STRING, description: "speech | idle" },
+                                }
+                            },
+                            head: {
+                                type: SchemaType.OBJECT,
+                                properties: {
+                                    motion_type: { type: SchemaType.STRING, description: "none | nod | shake | tilt" },
+                                    intensity: { type: SchemaType.NUMBER, description: "0.0 to 1.0" },
+                                }
+                            },
+                            gesture: {
+                                type: SchemaType.OBJECT,
+                                properties: {
+                                    gesture_name: { type: SchemaType.STRING, description: "hand_wave | open_palms | point_forward | light_hand_emphasis | hands_clasped | arms_relaxed | head_nod | head_shake | null" },
+                                    start_time_seconds: { type: SchemaType.NUMBER },
+                                    end_time_seconds: { type: SchemaType.NUMBER },
+                                }
                             }
                         }
                     },
-                    visuals: { type: SchemaType.STRING, description: "Detailed description for an image generator" },
-                    camera: { type: SchemaType.STRING },
-                    emotion: { type: SchemaType.STRING },
-                    duration: { type: SchemaType.NUMBER }
+                    dialogue: {
+                        type: SchemaType.OBJECT,
+                        properties: {
+                            text: { type: SchemaType.STRING },
+                            voice_style: { type: SchemaType.STRING, description: "warm | professional | energetic | calm" },
+                            lip_sync: { type: SchemaType.BOOLEAN },
+                        }
+                    },
+                    transition_out: { type: SchemaType.STRING, description: "cut | fade | crossfade" },
                 }
             }
         }
@@ -90,29 +139,84 @@ export async function directStory(imageData: string[], userIntent: string, chara
             }));
 
             const prompt = `
-          You are a world-class Creative Director specialized in "Multimodal Storytelling". 
-          TASK: Orchestrate a 3-scene interleaved storyboard based on the cast and intent.
-          
-          CAST:
-          ${characters.map(c => `- ${c.name}: ${c.vibe}`).join('\n')}
-          
-          INTENT: "${userIntent}"
-          
-          OUTPUT REQUIREMENTS (CREATIVE STORYTELLER MODE):
-          - 3 high-impact scenes.
-          - Each scene must have:
-            1. script: Array of character-driven dialogues or actions. 
-               Type: 'acting' ONLY (Format: "NAME: [text]"). DO NOT include 'narration'.
-               Every part MUST be spoken by a character from the CAST.
-               Each part MUST have:
-               - 'visuals': Detailed action/pose (e.g. "John kneeling, hands trembling").
-               - 'motion_vibe': Cinematic motion (e.g. "dramatic_zoom_in", "slow_pan_right", "handheld_shake").
-               - 'camera_work': Specific framing (e.g. "Extreme close-up on hands").
-               - 'part_duration': Precise timing in seconds (e.g. 3.5).
-               - 'transition': Flow to next part (e.g. "dissolve", "jump_cut").
-            2. visuals: Vivid atmosphere description for the overall scene background.
-            3. camera/emotion/duration: Precise instructions.
-        `;
+You are an AI VIDEO DIRECTOR, CHARACTER CHOREOGRAPHER, and PRODUCTION ORCHESTRATOR.
+
+Your job is NOT to generate images, audio, or video files.
+Your job is to OUTPUT A COMPLETE, STRICT, MACHINE-READABLE VIDEO PRODUCTION PLAN
+that a rendering engine can execute to create a human-like acted video.
+
+You MUST assume this is a REAL PRODUCT, not a demo.
+
+CHARACTER CAST:
+${characters.map(c => `- ${c.name}: ${c.vibe}`).join('\n')}
+
+USER SCRIPT TO CONVERT:
+"${userIntent}"
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+GLOBAL ASSUMPTIONS (NON-NEGOTIABLE)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. The user has uploaded one full-body photo and one half-body or face photo.
+2. These photos will be converted into ONE rigged digital human character with:
+   - Facial mesh, mouth blend shapes, eye tracking, head rotation, basic hand gestures (upper body only)
+3. The character CAN: lip-sync accurately, blink naturally, move head subtly, perform limited realistic gestures.
+4. The character CANNOT: walk, run, interact with objects, perform exaggerated or cartoon motion, teleport or violate physics.
+5. Default realism constraints: chest-up framing ONLY, subtle motion only, professional presenter style, no uncanny or exaggerated behavior.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SCRIPT INTERPRETATION RULES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+- Split the script into logical SCENES (aim for 3–5 scenes).
+- Each scene must feel visually distinct from the previous.
+- Every spoken sentence must trigger: an emotion, a gesture OR head movement, a camera decision.
+- Avoid static visuals longer than 5–8 seconds.
+- Favor realism over spectacle.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CHARACTER EMOTION SET (ONLY THESE)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+neutral | confident | friendly | serious | excited | thoughtful | concerned
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+GESTURE SET (ONLY THESE)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+hand_wave | open_palms | point_forward | light_hand_emphasis | hands_clasped | arms_relaxed | head_nod | head_shake
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CAMERA RULES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Shots: close_up | medium | medium_wide
+Movements: static | slow_zoom_in | slow_zoom_out | slight_pan_left | slight_pan_right
+Transitions: cut | fade | crossfade
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ANIMATION CONTRACT (MANDATORY)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Every scene MUST include an explicit animation_contract:
+- face.blink_rate: low | medium | high
+- face.mouth_activity: speech | idle
+- head.motion_type: none | nod | shake | tilt
+- head.intensity: 0.0 – 1.0
+- gesture.gesture_name: one allowed gesture (or null)
+- gesture.start_time_seconds: number
+- gesture.end_time_seconds: number
+
+Lip-sync rule: mouth moves ONLY during speech. Subtle idle mouth motion between phrases.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+QUALITY ENFORCEMENT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+- No two consecutive scenes may be visually identical.
+- No scene may be completely static.
+- Acting must feel human, restrained, and believable.
+- This must feel like a real presenter, not a slideshow.
+- Prioritize clarity, realism, and trust.
+
+OUTPUT: ONLY valid JSON matching the required schema. No markdown. No explanations. No comments. No text outside JSON.
+`;
 
             const request = {
                 contents: [{ role: 'user', parts: [...imageParts, { text: prompt }] }],
